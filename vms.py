@@ -302,18 +302,17 @@ class VelibMetropoleApi:
             # - dict if KO: {"error":{"code":503,"message":"Service Unavailable"}}
             try:
                 error = json_data['error']
-                raise VmsException("API problem with error: %s" % " ".join(error.keys()))
+                raise VmsException("API problem with error: {0}".format(error))
             except TypeError as exception:
                 # raised if json_data is not a dictionary
                 return json_data
             except KeyError as exception:
-                # raised if json_data is a dict bur 'error' was unavailable
-                raise VmsException("API problem without error: %s" % json_data)
+                # raised if json_data is a dict but 'error' was unavailable
+                raise VmsException("API problem without error: {0}".format(json_data))
         except requests.exceptions.RequestException as exception:
-            raise VmsException("Could not download API data: %s" % exception)
+            raise VmsException("Could not download API data: {0}".format(exception))
         except ValueError as exception:
-            logging.warning("Request content (hexed-binary) : %s" % request.content.hex())
-            raise VmsException("Could not extract json from binary content")
+            raise VmsException("Could not parse json content (hexed-binary): {0}".format(request.content.hex()))
 
 
 
