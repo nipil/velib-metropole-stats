@@ -6,10 +6,12 @@ aze
 
 import argparse
 import logging
-import requests
 import sys
 
 import pdb
+
+import arrow
+import requests
 
 class VmsException(Exception):
     """
@@ -53,7 +55,7 @@ class GpsCoordinates:
             return cls(data['latitude'], data['longitude'])
         except (TypeError, KeyError, ValueError) as exception:
             logging.warning("Input gps coordinates: %s", data)
-            raise VmsException("Cannot build gps coordinates: %s" % exception)
+            raise VmsException("Cannot build gps coordinates: ({0}) {1}".format(type(exception).__name__, exception))
 
 class StationInfo:
     """
@@ -66,8 +68,7 @@ class StationInfo:
         self.type = type_
         self.code = int(code)
 
-        # FIX
-        # seen on 2018-01-07 10:09
+        # FIX: due_date is None seen on 2018-01-07 10:09
         # {
         #     'name': 'Saint-Fargeau - Mortier',
         #     'code': '20117',
@@ -82,7 +83,8 @@ class StationInfo:
         if due_date is None:
             self.due_date = None
         else:
-            self.due_date = float(due_date)  # TODO: convert to real time
+            # WARNING: arrow conversion loses fractions of seconds
+            self.due_date = arrow.get(float(due_date))
 
         self.gps_coordinates = gps_coordinates
 
@@ -93,7 +95,7 @@ class StationInfo:
             self.name,
             self.type,
             self.code,
-            self.due_date,
+            self.due_date.timestamp if self.due_date else None,
             self.gps_coordinates)
 
     @classmethod
@@ -121,9 +123,9 @@ class StationInfo:
                 data['dueDate'],
                 GpsCoordinates.from_dict(data['gps']))
 
-        except (TypeError, KeyError, ValueError) as exception:
+        except (TypeError, KeyError, ValueError, arrow.parser.ParserError) as exception:
             logging.warning("Input station information: %s", data)
-            raise VmsException("Cannot build station information: %s" % exception)
+            raise VmsException("Cannot build station information: ({0}) {1}".format(type(exception).__name__, exception))
 
 
 class StationRecord:
@@ -223,7 +225,7 @@ class StationRecord:
                 data['overflowActivation'])
         except (TypeError, KeyError, ValueError) as exception:
             logging.warning("Input station record: %s", data)
-            raise VmsException("Cannot build station record: %s" % exception)
+            raise VmsException("Cannot build station record: ({0}) {1}".format(type(exception).__name__, exception))
 
 
 class VelibMetropoleApi:
@@ -321,21 +323,56 @@ class App:
     """
 
     def __init__(self, args):
+        self.setup_logging()
         self._api = VelibMetropoleApi()
+
+    def setup_logging(self):
+        logging.basicConfig(level=logging.DEBUG,
+                            format='%(asctime)s %(levelname)s %(message)s',
+                            datefmt='%Y-%m-%d %H:%M:%S %z',
+                            filename='/tmp/myapp.log',
+                            filemode='a')
+        console = logging.StreamHandler()
+        console.setLevel(logging.WARN)
+        formatter = logging.Formatter('%(levelname)s %(message)s')
+        console.setFormatter(formatter)
+        logging.getLogger('').addHandler(console)
+
+    def record_api_success(self):
+        """
+        Mark fetch sample as a success in stats
+        """
+        # TODO: implement
+        pass
+
+    def record_api_error(self):
+        """
+        Mark fetch sample as an error in stats
+        """
+        # TODO: implement
+        pass
 
     def get_api_data(self):
         """
         Parses JSON data into our own objects
-        Returns a generator
         """
-        return (StationRecord.from_dict(entry) for entry in self._api.get_data())
+
+        # Handles fetch api success stats
+        try:
+            data = self._api.get_data()
+            self.record_api_success()
+        except VmsException as exception:
+            self.record_api_error()
+            raise exception
+
+        # do *NOT* return an iterator: parsing must be done atomically
+        return [StationRecord.from_dict(entry) for entry in data]
 
     def run(self):
         """
         aze
         """
         station_records = self.get_api_data()
-        print(station_records)
         for i, entry in enumerate(station_records):
             print(i, entry)
 
