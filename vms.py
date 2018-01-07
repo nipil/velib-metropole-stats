@@ -44,8 +44,9 @@ class GpsCoordinates:
         return (self.latitude < other.latitude
             and self.longitude < other.longitude)
 
-    def to_tuple(self):
-        return (self.latitude, self.longitude)
+    def __iter__(self):
+        yield self.latitude
+        yield self.longitude
 
     @classmethod
     def from_dict(cls, data):
@@ -246,26 +247,20 @@ class VelibMetropoleApi:
         "gpsBotLongitude={3}&"
         "zoomLevel={4}")
 
-    DEFAULT_TOP_COORDINATES = GpsCoordinates(49.1, 2.7)
-    DEFAULT_BOTTOM_COORDINATES = GpsCoordinates(48.6, 1.9)
-    DEFAULT_ZOOM_LEVEL = 15
-
-    def __init__(self, top_coordinates=None, bottom_coordinates=None, zoom_level=None):
+    def __init__(self, top_coordinates=None, bottom_coordinates=None, zoom_level=15):
 
         self._top_coordinates = top_coordinates
         if not self._top_coordinates:
-            self._top_coordinates = self.DEFAULT_TOP_COORDINATES
+            self._top_coordinates = GpsCoordinates(49.1, 2.7)
 
         self._bottom_coordinates = bottom_coordinates
         if not self._bottom_coordinates:
-            self._bottom_coordinates = self.DEFAULT_BOTTOM_COORDINATES
+            self._bottom_coordinates = GpsCoordinates(48.6, 1.9)
 
         if not self._bottom_coordinates < self._top_coordinates:
             raise VmsException("Constraint violated: {0} < {1}".format(self._bottom_coordinates, self._top_coordinates))
 
         self._zoom_level = zoom_level
-        if not self._zoom_level:
-            self._zoom_level = self.DEFAULT_ZOOM_LEVEL
 
     def __str__(self):
         return self.to_url()
@@ -282,8 +277,8 @@ class VelibMetropoleApi:
         Get url with parameters filled with member values
         """
         return self.URL_TEMPLATE.format(
-            *self._top_coordinates.to_tuple(),
-            *self._bottom_coordinates.to_tuple(),
+            *self._top_coordinates,
+            *self._bottom_coordinates,
             self._zoom_level)
 
     def get_data(self):
@@ -371,7 +366,10 @@ class BaseModel(peewee.Model):
 
 
 class ApiReachabilityStat(BaseModel):
-    moment = peewee.TimestampField(utc=True)
+    """
+    aze
+    """
+    moment = peewee.TimestampField(primary_key=True, utc=True)
     result = peewee.BooleanField()
     detail = peewee.TextField(null=True, default=None)
 
@@ -420,14 +418,14 @@ class App:
         Parses JSON data into our own objects
         """
         # atomic timestamping
-        ts = arrow.utcnow()
+        now = arrow.utcnow()
 
         # Handles fetch api success stats
         try:
             data = self._api.get_data()
-            self.record_api_success(ts.timestamp)
+            self.record_api_success(now.timestamp)
         except VmsException as exception:
-            self.record_api_error(ts.timestamp, str(exception))
+            self.record_api_error(now.timestamp, str(exception))
             raise exception
 
         # do *NOT* return an iterator: parsing must be done atomically
