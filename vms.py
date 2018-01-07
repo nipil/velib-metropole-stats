@@ -13,12 +13,15 @@ import sys
 import pdb
 
 import arrow
+import peewee
 import requests
+
 
 class VmsException(Exception):
     """
     Custom exception root type
     """
+
 
 class GpsCoordinates:
     """
@@ -326,15 +329,57 @@ class Configuration:
     def get(self, section, name):
         try:
             return self._configuration[section][name]
-        except KeyError as exception:
+        except KeyError:
             raise VmsException("Undefined option '{0}' in configuration section '{1}'".format(name, section))
+
+
+class BaseModel(peewee.Model):
+    """
+    aze
+    """
+    class Meta:
+        """
+        aze
+        """
+        database = None
+
+    # @classmethod
+    # def set_database_filepath(cls, file_path):
+    #     """
+    #     aze
+    #     """
+    #     # See https://github.com/coleifer/peewee/issues/221
+    #     logging.info("Using database:", file_path)
+    #     cls._meta.database = peewee.SqliteDatabase(file_path)
+
+    # @classmethod
+    # def open_database(cls):
+    #     """
+    #     aze
+    #     """
+    #     cls._meta.database.connect()
+
+    @classmethod
+    def create_tables(cls):
+        """
+        aze
+        """
+        for subclass in cls.__subclasses__():
+            if not subclass.table_exists():
+                logging.info("Creating table %s", subclass.__name__)
+                subclass.create_table()
+
+
+class ApiReachabilityStat(BaseModel):
+    moment = peewee.TimestampField(utc=True)
+    result = peewee.BooleanField()
+    detail = peewee.TextField(null=True, default=None)
 
 
 class App:
     """
     aze
     """
-
     def __init__(self, args):
         # read configuration file
         self._configuration = Configuration(args.config)
@@ -349,34 +394,40 @@ class App:
         formatter = logging.Formatter('%(levelname)s %(message)s')
         console.setFormatter(formatter)
         logging.getLogger('').addHandler(console)
+        # setup database target
+        # BaseModel.set_database_filepath(os.path.expanduser(self._configuration.get('database', 'file_path'))) # TODO: fix
+        # BaseModel.open_database() # TODO: fix
+        BaseModel.create_tables()
         # instanciate data
         self._api = VelibMetropoleApi()
 
-    def record_api_success(self):
+    def record_api_success(self, timestamp):
         """
         Mark fetch sample as a success in stats
         """
-        # TODO: implement
-        pass
+        obj = ApiReachabilityStat(moment=timestamp, result=True)
+        obj.save()
 
-    def record_api_error(self):
+    def record_api_error(self, timestamp, message):
         """
         Mark fetch sample as an error in stats
         """
-        # TODO: implement
-        pass
+        obj = ApiReachabilityStat(moment=timestamp, result=False, detail=message)
+        obj.save()
 
     def get_api_data(self):
         """
         Parses JSON data into our own objects
         """
+        # atomic timestamping
+        ts = arrow.utcnow()
 
         # Handles fetch api success stats
         try:
             data = self._api.get_data()
-            self.record_api_success()
+            self.record_api_success(ts.timestamp)
         except VmsException as exception:
-            self.record_api_error()
+            self.record_api_error(ts.timestamp, str(exception))
             raise exception
 
         # do *NOT* return an iterator: parsing must be done atomically
@@ -421,4 +472,5 @@ def main():
 
 
 if __name__ == '__main__':
+    # pdb.set_trace()
     main()

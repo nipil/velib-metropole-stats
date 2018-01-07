@@ -1,2 +1,3 @@
 arrow==0.12.0
+peewee==2.10.2
 requests==2.18.4
