@@ -5,7 +5,9 @@ aze
 """
 
 import argparse
+import configparser
 import logging
+import os.path
 import sys
 
 import pdb
@@ -315,6 +317,18 @@ class VelibMetropoleApi:
             raise VmsException("Could not parse json content (hexed-binary): {0}".format(request.content.hex()))
 
 
+class Configuration:
+
+    def __init__(self, config_file):
+        self._configuration = configparser.ConfigParser()
+        self._configuration.read(os.path.expanduser(config_file))
+
+    def get(self, section, name):
+        try:
+            return self._configuration[section][name]
+        except KeyError as exception:
+            raise VmsException("Undefined option '{0}' in configuration section '{1}'".format(name, section))
+
 
 class App:
     """
@@ -322,20 +336,21 @@ class App:
     """
 
     def __init__(self, args):
-        self.setup_logging()
-        self._api = VelibMetropoleApi()
-
-    def setup_logging(self):
+        # read configuration file
+        self._configuration = Configuration(args.config)
+        # setup logging
         logging.basicConfig(level=logging.DEBUG,
                             format='%(asctime)s %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S %z',
-                            filename='/tmp/myapp.log',
+                            filename=os.path.expanduser(self._configuration.get('logging', 'file_path')),
                             filemode='a')
         console = logging.StreamHandler()
         console.setLevel(logging.WARN)
         formatter = logging.Formatter('%(levelname)s %(message)s')
         console.setFormatter(formatter)
         logging.getLogger('').addHandler(console)
+        # instanciate data
+        self._api = VelibMetropoleApi()
 
     def record_api_success(self):
         """
@@ -383,6 +398,7 @@ def main():
 
     try:
         parser = argparse.ArgumentParser(description="velib-metropole-stats")
+        parser.add_argument('-c', '--config', default='vms.conf')
         args = parser.parse_args()
         app = App(args)
         app.run()
