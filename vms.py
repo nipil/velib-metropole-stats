@@ -63,49 +63,84 @@ class GpsCoordinates:
             logging.warning("Input gps coordinates: %s", data)
             raise VmsException("Cannot build gps coordinates: ({0}) {1}".format(type(exception).__name__, exception))
 
-class StationInfo:
+
+class BaseModel(peewee.Model):
+    """
+    aze
+    """
+    class Meta:
+        """
+        aze
+        """
+        database = None
+
+    # @classmethod
+    # def set_database_filepath(cls, file_path):
+    #     """
+    #     aze
+    #     """
+    #     # See https://github.com/coleifer/peewee/issues/221
+    #     logging.info("Using database:", file_path)
+    #     cls._meta.database = peewee.SqliteDatabase(file_path)
+
+    # @classmethod
+    # def open_database(cls):
+    #     """
+    #     aze
+    #     """
+    #     cls._meta.database.connect()
+
+    @classmethod
+    def create_tables(cls):
+        """
+        aze
+        """
+        for subclass in cls.__subclasses__():
+            if not subclass.table_exists():
+                logging.info("Creating table %s", subclass.__name__)
+                subclass.create_table()
+
+
+class ApiReachabilityStat(BaseModel):
+    """
+    aze
+    """
+    moment = peewee.TimestampField(primary_key=True, utc=True)
+    result = peewee.BooleanField()
+    detail = peewee.TextField(null=True, default=None)
+
+
+class StationInfo(BaseModel):
     """
     Holds "permanent" station information
     """
+    moment = peewee.TimestampField(utc=True)
+    state = peewee.CharField() # TODO: "Operative"/?/? could translate to integers ?
+    name = peewee.CharField()
+    stype = peewee.BooleanField()
+    code = peewee.IntegerField()
+    due_date = peewee.TimestampField(utc=True, null=True)
+    gps_latitude = peewee.FloatField()
+    gps_longitude = peewee.FloatField()
 
-    def __init__(self, state, name, type_, code, due_date, gps_coordinates):
-        self.state = state
-        self.name = name
-        self.type = type_
-        self.code = int(code)
+    class Meta:
 
-        # FIX: due_date is None seen on 2018-01-07 10:09
-        # {
-        #     'name': 'Saint-Fargeau - Mortier',
-        #     'code': '20117',
-        #     'type': 'yes',
-        #     'dueDate': None,
-        #     'gps': {
-        #         'latitude': 48.872747269036246,
-        #         'longitude': 2.408203454302088
-        #     },
-        #     'state': 'Operative'
-        # }
-        if due_date is None:
-            self.due_date = None
-        else:
-            # WARNING: arrow conversion loses fractions of seconds
-            self.due_date = arrow.get(float(due_date))
-
-        self.gps_coordinates = gps_coordinates
+        primary_key = peewee.CompositeKey('moment', 'code')
 
     def __repr__(self):
-        return "{0}({1}, {2}, {3}, {4}, {5}, {6})".format(
+        return "{0}({1}, {2}, {3}, {4}, {5}, {6}, {7}, {8})".format(
             __class__.__name__,
+            self.moment,
             self.state,
             self.name,
-            self.type,
+            self.stype,
             self.code,
             self.due_date.timestamp if self.due_date else None,
-            self.gps_coordinates)
+            self.gps_latitude,
+            self.gps_longitude)
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, moment, data):
         """
         Builds an object from a dictionary :
         {
@@ -122,49 +157,67 @@ class StationInfo:
         """
         try:
             return cls(
-                data['state'],
-                data['name'],
-                data['type'],
-                data['code'],
-                data['dueDate'],
-                GpsCoordinates.from_dict(data['gps']))
+                moment=moment,
+                state=data['state'],
+                name=data['name'],
+                stype=VelibMetropoleApi.bool_from_yes_no_str(data['type']),
+                code=int(data['code']),
+                gps_latitude=float(data['gps']['latitude']),
+                gps_longitude=float(data['gps']['longitude']),
+
+                # FIX: due_date is None seen on 2018-01-07 10:09
+                # {
+                #     'name': 'Saint-Fargeau - Mortier',
+                #     'code': '20117',
+                #     'type': 'yes',
+                #     'dueDate': None,
+                #     'gps': {
+                #         'latitude': 48.872747269036246,
+                #         'longitude': 2.408203454302088
+                #     },
+                #     'state': 'Operative'
+                # }
+
+                # WARNING: api provides fractions of second in timestamp, arrow conversion loses it
+                due_date=arrow.get(float(data['dueDate'])) if data['dueDate'] is not None else None)
 
         except (TypeError, KeyError, ValueError, arrow.parser.ParserError) as exception:
             logging.warning("Input station information: %s", data)
             raise VmsException("Cannot build station information: ({0}) {1}".format(type(exception).__name__, exception))
 
 
-class StationRecord:
+class StationRecord(BaseModel):
     """
     Holds full station information and state at a specific moment in time
     """
+    moment = peewee.TimestampField(utc=True)
+    code = peewee.IntegerField()
+    overflow = peewee.BooleanField()
+    max_bike_overflow = peewee.IntegerField()
+    nb_e_bike_overflow = peewee.IntegerField()
+    kiosk_state = peewee.BooleanField()
+    density_level = peewee.IntegerField()
+    nb_ebike = peewee.IntegerField()
+    nb_free_dock = peewee.IntegerField()
+    nb_dock = peewee.IntegerField()
+    nb_bike_overflow = peewee.IntegerField()
+    nb_e_dock = peewee.IntegerField()
+    credit_card = peewee.BooleanField()
+    nb_bike = peewee.IntegerField()
+    nb_free_e_dock = peewee.IntegerField()
+    overflow_activation = peewee.BooleanField()
 
-    def __init__(self, station, overflow, max_bike_overflow, nb_e_bike_overflow,
-                 kiosk_state, density_level, nb_ebike, nb_free_dock, nb_dock,
-                 nb_bike_overflow, nb_e_dock, credit_card, nb_bike, nb_free_e_dock,
-                 overflow_activation):
-        self.station = station
-        self.overflow = overflow
-        self.max_bike_overflow = max_bike_overflow
-        self.nb_e_bike_overflow = nb_e_bike_overflow
-        self.kiosk_state = kiosk_state
-        self.density_level = density_level
-        self.nb_ebike = nb_ebike
-        self.nb_free_dock = nb_free_dock
-        self.nb_dock = nb_dock
-        self.nb_bike_overflow = nb_bike_overflow
-        self.nb_e_dock = nb_e_dock
-        self.credit_card = credit_card
-        self.nb_bike = nb_bike
-        self.nb_free_e_dock = nb_free_e_dock
-        self.overflow_activation = overflow_activation
+    class Meta:
+
+        primary_key = peewee.CompositeKey('moment', 'code')
 
     def __repr__(self):
         return ("{0}({1}, {2}, {3}, {4}, {5}, "
                 "{6}, {7}, {8}, {9}, {10}, "
-                "{11}, {12}, {13}, {14}, {15})").format(
+                "{11}, {12}, {13}, {14}, {15}, {16})").format(
                     __class__.__name__,
-                    self.station,
+                    self.moment,
+                    self.code,
                     self.overflow,
                     self.max_bike_overflow,
                     self.nb_e_bike_overflow,
@@ -181,63 +234,105 @@ class StationRecord:
                     self.overflow_activation)
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, moment, data):
         """
         Builds an object from a dictionary :
         {
-           'station':{
-              'state':'Operative',
-              'name':'Assas - Luxembourg',
-              'type':'yes',
-              'code':'6008',
-              'dueDate':1514761200.0,
-              'gps':{
-                 'longitude':2.333428381875887,
-                 'latitude':48.84373446877937
-              }
-           },
-           'overflow':'no',
-           'maxBikeOverflow':0,
-           'nbEBikeOverflow':0,
-           'kioskState':'no',
-           'densityLevel':0,
-           'nbEbike':2,
-           'nbFreeDock':0,
-           'nbDock':0,
-           'nbBikeOverflow':0,
-           'nbEDock':35,
-           'creditCard':'no',
-           'nbBike':7,
-           'nbFreeEDock':25,
-           'overflowActivation':'no'
+            'station':{
+                'state':'Operative',
+                'name':'Assas - Luxembourg',
+                'type':'yes',
+                'code':'6008',
+                'dueDate':1514761200.0,
+                'gps':{
+                    'longitude':2.333428381875887,
+                    'latitude':48.84373446877937
+                }
+            },
+            'overflow':'no',
+            'maxBikeOverflow':0,
+            'nbEBikeOverflow':0,
+            'kioskState':'no',
+            'densityLevel':0,
+            'nbEbike':2,
+            'nbFreeDock':0,
+            'nbDock':0,
+            'nbBikeOverflow':0,
+            'nbEDock':35,
+            'creditCard':'no',
+            'nbBike':7,
+            'nbFreeEDock':25,
+            'overflowActivation':'no'
         }
         """
         try:
             return cls(
-                StationInfo.from_dict(data['station']),
-                data['overflow'],
-                data['maxBikeOverflow'],
-                data['nbEBikeOverflow'],
-                data['kioskState'],
-                data['densityLevel'],
-                data['nbEbike'],
-                data['nbFreeDock'],
-                data['nbDock'],
-                data['nbBikeOverflow'],
-                data['nbEDock'],
-                data['creditCard'],
-                data['nbBike'],
-                data['nbFreeEDock'],
-                data['overflowActivation'])
+                moment=moment,
+                code=int(data['station']['code']),
+                overflow=VelibMetropoleApi.bool_from_yes_no_str(data['overflow']),
+                max_bike_overflow=int(data['maxBikeOverflow']),
+                nb_e_bike_overflow=int(data['nbEBikeOverflow']),
+                kiosk_state=VelibMetropoleApi.bool_from_yes_no_str(data['kioskState']),
+                density_level=int(data['densityLevel']),
+                nb_ebike=int(data['nbEbike']),
+                nb_free_dock=int(data['nbFreeDock']),
+                nb_dock=int(data['nbDock']),
+                nb_bike_overflow=int(data['nbBikeOverflow']),
+                nb_e_dock=int(data['nbEDock']),
+                credit_card=VelibMetropoleApi.bool_from_yes_no_str(data['creditCard']),
+                nb_bike=int(data['nbBike']),
+                nb_free_e_dock=int(data['nbFreeEDock']),
+                overflow_activation=VelibMetropoleApi.bool_from_yes_no_str(data['overflowActivation']))
         except (TypeError, KeyError, ValueError) as exception:
             logging.warning("Input station record: %s", data)
             raise VmsException("Cannot build station record: ({0}) {1}".format(type(exception).__name__, exception))
+
+
+class StationSample:
+    """
+    aze
+    """
+    def __init__(self, info, record):
+        self.info = info
+        self.record = record
+
+    def __repr__(self):
+        return ("{0}({1}, {2})").format(
+                    __class__.__name__,
+                    self.info,
+                    self.record)
+
+    @classmethod
+    def from_dict(cls, moment, data):
+        """
+        Builds an object from a dictionary :
+        {
+            'station':{
+                ...
+            },
+            ...
+        }
+        """
+        return cls(StationInfo.from_dict(moment, data['station']),
+                   StationRecord.from_dict(moment, data))
 
 
 class VelibMetropoleApi:
     """
     Allows access to velib-metropole.fr data feed
     """
+
+    @staticmethod
+    def bool_from_yes_no_str(value):
+        """
+        aze
+        """
+        if value == "yes":
+            return True
+        elif value == "no":
+            return False
+        else:
+            raise VmsException("Invalid value for boolean conversion: {0}".format(value))
 
     URL_TEMPLATE = (
         "https://www.velib-metropole.fr/webapi/map/details?"
@@ -328,52 +423,6 @@ class Configuration:
             raise VmsException("Undefined option '{0}' in configuration section '{1}'".format(name, section))
 
 
-class BaseModel(peewee.Model):
-    """
-    aze
-    """
-    class Meta:
-        """
-        aze
-        """
-        database = None
-
-    # @classmethod
-    # def set_database_filepath(cls, file_path):
-    #     """
-    #     aze
-    #     """
-    #     # See https://github.com/coleifer/peewee/issues/221
-    #     logging.info("Using database:", file_path)
-    #     cls._meta.database = peewee.SqliteDatabase(file_path)
-
-    # @classmethod
-    # def open_database(cls):
-    #     """
-    #     aze
-    #     """
-    #     cls._meta.database.connect()
-
-    @classmethod
-    def create_tables(cls):
-        """
-        aze
-        """
-        for subclass in cls.__subclasses__():
-            if not subclass.table_exists():
-                logging.info("Creating table %s", subclass.__name__)
-                subclass.create_table()
-
-
-class ApiReachabilityStat(BaseModel):
-    """
-    aze
-    """
-    moment = peewee.TimestampField(primary_key=True, utc=True)
-    result = peewee.BooleanField()
-    detail = peewee.TextField(null=True, default=None)
-
-
 class App:
     """
     aze
@@ -429,7 +478,7 @@ class App:
             raise exception
 
         # do *NOT* return an iterator: parsing must be done atomically
-        return [StationRecord.from_dict(entry) for entry in data]
+        return [StationSample.from_dict(now.timestamp, entry) for entry in data]
 
     def run(self):
         """
@@ -467,6 +516,7 @@ def main():
 
     except VmsException as exception:
         logging.critical("%s", exception)
+        raise  # DEBUG
 
 
 if __name__ == '__main__':
