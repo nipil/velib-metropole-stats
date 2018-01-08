@@ -516,15 +516,16 @@ class App:
         console = logging.StreamHandler()
         logging.getLogger('').addHandler(console)
         console.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
+        # set default logging level
         console.setLevel(logging.WARNING)
-        if args.debug:
-            console.setLevel(logging.DEBUG)
-        else:
-            level = self._configuration.get('logging', 'console_log_level')
-            numeric_level = getattr(logging, level.upper(), None)
-            if not isinstance(numeric_level, int):
-                raise VmsException('Invalid log level: {0}'.format(level))
-            console.setLevel(numeric_level)
+
+        level = self._configuration.get('logging', 'console_log_level')
+        if self._args.log_level:
+            level = self._args.log_level
+        numeric_level = getattr(logging, level.upper(), None)
+        if not isinstance(numeric_level, int):
+            raise VmsException('Invalid log level: {0}'.format(level))
+        console.setLevel(numeric_level)
 
         # setup database target
         # BaseModel.set_database_filepath(os.path.expanduser(self._configuration.get('database', 'file_path'))) # TODO: fix
@@ -539,6 +540,7 @@ class App:
         aze
         """
         full_path = Path(file_path).expand()
+        logging.info("Processing file %s", full_path)
         file_name = full_path.name
         try:
             moment = arrow.get(file_name, self.FILENAME_TIMESTAMP_PATTERN)
@@ -613,8 +615,9 @@ class App:
         aze
         """
         if self._args.dir:
+            logging.info("Searching directory %s", self._args.dir)
             try:
-                files = (Path(self._args.dir).files())
+                files = Path(self._args.dir).files()
             except (NotADirectoryError, FileNotFoundError) as exception:
                 raise VmsException("Could not list files: {0}".format(exception))
             for file_path in sorted(files):
@@ -635,7 +638,7 @@ def main():
     try:
         parser = argparse.ArgumentParser(description="velib-metropole-stats")
         parser.add_argument('-c', '--config', default='vms.conf')
-        parser.add_argument('--debug', default=False, action='store_true')
+        parser.add_argument('-l', '--log-level', choices=['debug', 'info', 'warning', 'error', 'critical'])
         parser.add_argument('-f', '--file')
         parser.add_argument('-d', '--dir')
         args = parser.parse_args()
