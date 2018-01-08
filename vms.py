@@ -5,7 +5,9 @@ aze
 """
 
 import argparse
+import bz2
 import configparser
+import json
 import logging
 import os.path
 import sys
@@ -16,12 +18,16 @@ import arrow
 import peewee
 import requests
 
+from path import Path
+
+
+DATABASE = peewee.SqliteDatabase(os.path.join(os.path.dirname(os.path.realpath(__file__)), "db.sqlite3"))
+
 
 class VmsException(Exception):
     """
     Custom exception root type
     """
-
 
 class GpsCoordinates:
     """
@@ -72,7 +78,7 @@ class BaseModel(peewee.Model):
         """
         aze
         """
-        database = None
+        database = DATABASE
 
     # @classmethod
     # def set_database_filepath(cls, file_path):
@@ -105,21 +111,62 @@ class ApiReachabilityStat(BaseModel):
     """
     aze
     """
-    moment = peewee.TimestampField(primary_key=True, utc=True)
+    moment = peewee.IntegerField(primary_key=True)
     result = peewee.BooleanField()
     detail = peewee.TextField(null=True, default=None)
 
+    @classmethod
+    def save_api_stat(cls, moment, result, detail=None):
+        """
+        aze
+        """
+        try:
+            with DATABASE.atomic() as transaction:
+                logging.debug("Saving api stat: %s %s", result, detail)
+                cls.create(moment=moment, result=result, detail=detail)
+        except Exception as exception:  # TODO: reduce exceptions type
+            logging.warning("Could not save api statistics (%s %s) due to (%s) %s", moment, result, type(exception).__name__, detail)
 
-class StationInfo(BaseModel):
+class StationCommon:
+    """
+    aze
+    """
+    def get_previous(self):
+        """
+        aze
+        """
+        cls = self.__class__
+        sub_query = cls.select(peewee.fn.MAX(cls.moment)).where(cls.moment < self.moment)
+        query = cls.select().where(cls.code == self.code).where(cls.moment == sub_query)
+        try:
+            return query.get()
+        except peewee.DoesNotExist as exception:
+            return None
+
+    def save_if_changed(self):
+        # logging.debug("Saving if changed %s", self)
+        previous = self.get_previous()
+        # logging.debug("Last preceding %s", previous)
+        print("================")
+        print(self)
+        print(previous)
+        if previous is None or self.has_changed(previous):
+            # logging.debug("Inserting %s", self)
+            print("insert")
+            return self.save(force_insert=True)
+        return 0
+
+
+class StationInfo(StationCommon, BaseModel):
     """
     Holds "permanent" station information
     """
-    moment = peewee.TimestampField(utc=True)
+    moment = peewee.IntegerField()
     state = peewee.CharField() # TODO: "Operative"/?/? could translate to integers ?
     name = peewee.CharField()
     stype = peewee.BooleanField()
     code = peewee.IntegerField()
-    due_date = peewee.TimestampField(utc=True, null=True)
+    due_date = peewee.IntegerField(null=True)
     gps_latitude = peewee.FloatField()
     gps_longitude = peewee.FloatField()
 
@@ -135,9 +182,20 @@ class StationInfo(BaseModel):
             self.name,
             self.stype,
             self.code,
-            self.due_date.timestamp if self.due_date else None,
+            self.due_date,
             self.gps_latitude,
             self.gps_longitude)
+
+    def has_changed(self, other):
+        """
+        Compare everything except moment and code
+        """
+        return (self.state != other.state
+                or self.name != other.name
+                or self.stype != other.stype
+                or self.due_date != other.due_date
+                or self.gps_latitude != other.gps_latitude
+                or self.gps_longitude != other.gps_longitude)
 
     @classmethod
     def from_dict(cls, moment, data):
@@ -177,20 +235,18 @@ class StationInfo(BaseModel):
                 #     },
                 #     'state': 'Operative'
                 # }
-
-                # WARNING: api provides fractions of second in timestamp, arrow conversion loses it
-                due_date=arrow.get(float(data['dueDate'])) if data['dueDate'] is not None else None)
+                due_date=int(data['dueDate']) if data['dueDate'] is not None else None)
 
         except (TypeError, KeyError, ValueError, arrow.parser.ParserError) as exception:
             logging.warning("Input station information: %s", data)
             raise VmsException("Cannot build station information: ({0}) {1}".format(type(exception).__name__, exception))
 
 
-class StationRecord(BaseModel):
+class StationRecord(StationCommon, BaseModel):
     """
     Holds full station information and state at a specific moment in time
     """
-    moment = peewee.TimestampField(utc=True)
+    moment = peewee.IntegerField()
     code = peewee.IntegerField()
     overflow = peewee.BooleanField()
     max_bike_overflow = peewee.IntegerField()
@@ -207,9 +263,11 @@ class StationRecord(BaseModel):
     nb_free_e_dock = peewee.IntegerField()
     overflow_activation = peewee.BooleanField()
 
+
     class Meta:
 
         primary_key = peewee.CompositeKey('moment', 'code')
+
 
     def __repr__(self):
         return ("{0}({1}, {2}, {3}, {4}, {5}, "
@@ -232,6 +290,25 @@ class StationRecord(BaseModel):
                     self.nb_bike,
                     self.nb_free_e_dock,
                     self.overflow_activation)
+
+    def has_changed(self, other):
+        """
+        Compare everything except moment and code
+        """
+        return (self.overflow != other.overflow
+                or self.max_bike_overflow != other.max_bike_overflow
+                or self.nb_e_bike_overflow != other.nb_e_bike_overflow
+                or self.kiosk_state != other.kiosk_state
+                or self.density_level != other.density_level
+                or self.nb_ebike != other.nb_ebike
+                or self.nb_free_dock != other.nb_free_dock
+                or self.nb_dock != other.nb_dock
+                or self.nb_bike_overflow != other.nb_bike_overflow
+                or self.nb_e_dock != other.nb_e_dock
+                or self.credit_card != other.credit_card
+                or self.nb_bike != other.nb_bike
+                or self.nb_free_e_dock != other.nb_free_e_dock
+                or self.overflow_activation != other.overflow_activation)
 
     @classmethod
     def from_dict(cls, moment, data):
@@ -293,14 +370,14 @@ class StationSample:
     aze
     """
     def __init__(self, info, record):
-        self.info = info
-        self.record = record
+        self._info = info
+        self._record = record
 
     def __repr__(self):
         return ("{0}({1}, {2})").format(
                     __class__.__name__,
-                    self.info,
-                    self.record)
+                    self._info,
+                    self._record)
 
     @classmethod
     def from_dict(cls, moment, data):
@@ -315,6 +392,15 @@ class StationSample:
         """
         return cls(StationInfo.from_dict(moment, data['station']),
                    StationRecord.from_dict(moment, data))
+
+    def save_all_if_changed(self):
+        """
+        aze
+        """
+        n_saved = 0
+        n_saved += StationCommon.save_if_changed(self._info)
+        n_saved += StationCommon.save_if_changed(self._record)
+        return n_saved
 
 
 class VelibMetropoleApi:
@@ -344,13 +430,9 @@ class VelibMetropoleApi:
 
     def __init__(self, top_coordinates=None, bottom_coordinates=None, zoom_level=15):
 
-        self._top_coordinates = top_coordinates
-        if not self._top_coordinates:
-            self._top_coordinates = GpsCoordinates(49.1, 2.7)
+        self._top_coordinates = top_coordinates or GpsCoordinates(49.1, 2.7)
 
-        self._bottom_coordinates = bottom_coordinates
-        if not self._bottom_coordinates:
-            self._bottom_coordinates = GpsCoordinates(48.6, 1.9)
+        self._bottom_coordinates = bottom_coordinates or GpsCoordinates(48.6, 1.9)
 
         if not self._bottom_coordinates < self._top_coordinates:
             raise VmsException("Constraint violated: {0} < {1}".format(self._bottom_coordinates, self._top_coordinates))
@@ -376,7 +458,7 @@ class VelibMetropoleApi:
             *self._bottom_coordinates,
             self._zoom_level)
 
-    def get_data(self):
+    def get_json(self):
         """
         Fetches API data using parametrized URL
         Parses JSON input
@@ -384,37 +466,24 @@ class VelibMetropoleApi:
         """
         try:
             # get content
-            request = requests.get(self.to_url(), timeout=1)
-
+            request = requests.get(self.to_url(), timeout=30)
             # handle non-ok return codes
             request.raise_for_status()
+            # convert to text
+            text = request.text
+            # return our precious data
+            return text
 
-            # parse json
-            json_data = request.json()
-
-            # analyze
-            # - list if OK: [{"station": ...]
-            # - dict if KO: {"error":{"code":503,"message":"Service Unavailable"}}
-            try:
-                error = json_data['error']
-                raise VmsException("API problem with error: {0}".format(error))
-            except TypeError as exception:
-                # raised if json_data is not a dictionary
-                return json_data
-            except KeyError as exception:
-                # raised if json_data is a dict but 'error' was unavailable
-                raise VmsException("API problem without error: {0}".format(json_data))
         except requests.exceptions.RequestException as exception:
+            # inform caller
             raise VmsException("Could not download API data: {0}".format(exception))
-        except ValueError as exception:
-            raise VmsException("Could not parse json content (hexed-binary): {0}".format(request.content.hex()))
 
 
 class Configuration:
 
     def __init__(self, config_file):
         self._configuration = configparser.ConfigParser()
-        self._configuration.read(os.path.expanduser(config_file))
+        self._configuration.read(Path(config_file).expand())
 
     def get(self, section, name):
         try:
@@ -428,75 +497,126 @@ class App:
     aze
     """
     def __init__(self, args):
+
         # read configuration file
-        self._configuration = Configuration(args.config)
-        # setup logging
+        self._args = args
+        self._configuration = Configuration(self._args.config)
+
+        # log everything to file
         logging.basicConfig(level=logging.DEBUG,
                             format='%(asctime)s %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S %z',
-                            filename=os.path.expanduser(self._configuration.get('logging', 'file_path')),
+                            filename=Path(self._configuration.get('logging', 'file_path')).expand(),
                             filemode='a')
+
+        # reduced logging for screen output
         console = logging.StreamHandler()
-        console.setLevel(logging.WARN)
-        formatter = logging.Formatter('%(levelname)s %(message)s')
-        console.setFormatter(formatter)
         logging.getLogger('').addHandler(console)
+        console.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
+        console.setLevel(logging.WARNING)
+        if args.debug:
+            console.setLevel(logging.DEBUG)
+        else:
+            level = self._configuration.get('logging', 'console_log_level')
+            numeric_level = getattr(logging, level.upper(), None)
+            if not isinstance(numeric_level, int):
+                raise VmsException('Invalid log level: {0}'.format(level))
+            console.setLevel(numeric_level)
+
         # setup database target
         # BaseModel.set_database_filepath(os.path.expanduser(self._configuration.get('database', 'file_path'))) # TODO: fix
         # BaseModel.open_database() # TODO: fix
         BaseModel.create_tables()
+
         # instanciate data
         self._api = VelibMetropoleApi()
 
-    def record_api_success(self, timestamp):
+    def get_from_file(self, file_path):
         """
-        Mark fetch sample as a success in stats
+        aze
         """
-        obj = ApiReachabilityStat(moment=timestamp, result=True)
-        obj.save()
-
-    def record_api_error(self, timestamp, message):
-        """
-        Mark fetch sample as an error in stats
-        """
-        obj = ApiReachabilityStat(moment=timestamp, result=False, detail=message)
-        obj.save()
-
-    def get_api_data(self):
-        """
-        Parses JSON data into our own objects
-        """
-        # atomic timestamping
-        now = arrow.utcnow()
-
-        # Handles fetch api success stats
+        file_path = Path(self._args.file).expand()
+        moment = arrow.get(file_path.name, 'YYYY-MM-DD_HH-mm-ss_ZZZ')
         try:
-            data = self._api.get_data()
-            self.record_api_success(now.timestamp)
-        except VmsException as exception:
-            self.record_api_error(now.timestamp, str(exception))
-            raise exception
+            with bz2.open(file_path, 'rt') as file_obj:
+                data = file_obj.read()
+        except OSError as exception:
+            raise VmsException("Could not bunzip2 {0}: {1}".format(file_path, exception))
+        # return infos to caller
+        return (moment, data)
 
-        # do *NOT* return an iterator: parsing must be done atomically
-        return [StationSample.from_dict(now.timestamp, entry) for entry in data]
+    def get_from_api(self):
+        """
+        aze
+        """
+        moment = arrow.utcnow()
+        try:
+            data = self._api.get_json()
+        except VmsException as exception:
+            # save stats for errors
+            ApiReachabilityStat.save_api_stat(moment.timestamp, False, str(exception))
+            raise
+        # save stats for successes
+        ApiReachabilityStat.save_api_stat(moment.timestamp, True)
+        # return infos to caller
+        return (moment, data)
 
     def run(self):
         """
         aze
         """
-        station_records = self.get_api_data()
-        for i, entry in enumerate(station_records):
-            print(i, entry)
+        # load moment/data from designated source
+        if self._args.file:
+            moment, data = self.get_from_file(self._args.file)
+        else:
+            moment, data = self.get_from_api()
+
+        # parse json
+        try:
+            json_data = json.loads(data)
+        except json.JSONDecodeError as exception:
+            logging.debug("Invalid JSON: %s", data)
+            raise VmsException("Could not parse json data: {0}".format(exception))
+
+        # analyse input
+        # - dict if KO: {"error":{"code":503,"message":"Service Unavailable"}}
+        # - list if OK: [{"station": ...]
+        try:
+            error = json_data['error']
+            raise VmsException("API problem with error: {0}".format(error))
+        except TypeError as exception:
+            # raised if json_data is not a dictionary
+            # https://www.json.org
+            # then it is a list (it was valid json)
+            # so we can proceed
+            pass
+        except KeyError as exception:
+            # raised if json_data is a dict but 'error' was unavailable
+            raise VmsException("API problem without error: {0}".format(json_data))
+
+        # log some statistics
+        logging.info("%s records in incoming data", len(json_data))
+
+        # build objects
+        station_records = (StationSample.from_dict(moment.timestamp, entry) for entry in json_data)
+
+        # process
+        new_records_count = 0
+        with DATABASE.atomic() as transaction:
+            for entry in station_records:
+                new_records_count += entry.save_all_if_changed()
+        logging.info("%s updates detected", new_records_count)
 
 
 def main():
     """
     aze
     """
-
     try:
         parser = argparse.ArgumentParser(description="velib-metropole-stats")
         parser.add_argument('-c', '--config', default='vms.conf')
+        parser.add_argument('-d', '--debug', default=False, action='store_true')
+        parser.add_argument('-f', '--file')
         args = parser.parse_args()
         app = App(args)
         app.run()
