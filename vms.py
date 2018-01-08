@@ -135,23 +135,25 @@ class StationCommon:
         aze
         """
         cls = self.__class__
-        sub_query = cls.select(peewee.fn.MAX(cls.moment)).where(cls.moment < self.moment)
-        query = cls.select().where(cls.code == self.code).where(cls.moment == sub_query)
+        sub_query = cls \
+            .select(peewee.fn.MAX(cls.moment)) \
+            .where(cls.code == self.code) \
+            .where(cls.moment < self.moment)
+        query = cls \
+            .select() \
+            .where(cls.code == self.code) \
+            .where(cls.moment == sub_query)
         try:
             return query.get()
         except peewee.DoesNotExist as exception:
+            logging.debug("not found")
             return None
 
     def save_if_changed(self):
-        # logging.debug("Saving if changed %s", self)
+        logging.debug("Saving if changed %s", self)
         previous = self.get_previous()
-        # logging.debug("Last preceding %s", previous)
-        print("================")
-        print(self)
-        print(previous)
+        logging.debug("Last preceding %s", previous)
         if previous is None or self.has_changed(previous):
-            # logging.debug("Inserting %s", self)
-            print("insert")
             return self.save(force_insert=True)
         return 0
 
