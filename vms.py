@@ -655,10 +655,10 @@ class App:
                 moment, data = self.get_from_file(file_path)
                 try:
                     self.do_work(moment, data)
-                except ApiHttp503Exception as exception:
-                    logging.warning("Detected HTTP error 503 while processing {0}: {1}".format(file_path, exception))
-                    if not self._args.continue_on_http_503:
+                except ApiException as exception:
+                    if not self._args.skip_file_on_error:
                         raise
+                    logging.warning("Error while processing, but continuing as requested {0}: {1}".format(file_path, exception))
         elif self._args.file:
             moment, data = self.get_from_file(self._args.file)
             self.do_work(moment, data)
@@ -677,7 +677,7 @@ def main():
         parser.add_argument('-l', '--log-level', choices=['debug', 'info', 'warning', 'error', 'critical'])
         parser.add_argument('-f', '--file')
         parser.add_argument('-d', '--dir')
-        parser.add_argument('--continue-on-http-503', default=False, action='store_true')
+        parser.add_argument('--skip-file-on-error', default=False, action='store_true')
         args = parser.parse_args()
         app = App(args)
         app.run()
