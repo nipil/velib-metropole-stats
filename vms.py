@@ -9,7 +9,6 @@ import bz2
 import configparser
 import json
 import logging
-import os.path
 import sys
 
 import pdb
@@ -21,7 +20,7 @@ import requests
 from path import Path
 
 
-DATABASE = peewee.SqliteDatabase(os.path.join(os.path.dirname(os.path.realpath(__file__)), "db.sqlite3"))
+DATABASE = peewee.SqliteDatabase(Path(__file__).realpath().parent / "db.sqlite3")
 
 
 class VmsException(Exception):
