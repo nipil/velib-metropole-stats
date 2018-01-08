@@ -28,6 +28,26 @@ class VmsException(Exception):
     Custom exception root type
     """
 
+class ApiException(VmsException):
+    """
+    aze
+    """
+
+class ApiNetworkException(ApiException):
+    """
+    aze
+    """
+
+class ApiHttp503Exception(ApiNetworkException):
+    """
+    aze
+    """
+
+class ApiParsingException(ApiException):
+    """
+    aze
+    """
+
 class GpsCoordinates:
     """
     Holds GPS coordinates
@@ -66,7 +86,7 @@ class GpsCoordinates:
             return cls(data['latitude'], data['longitude'])
         except (TypeError, KeyError, ValueError) as exception:
             logging.warning("Input gps coordinates: %s", data)
-            raise VmsException("Cannot build gps coordinates: ({0}) {1}".format(type(exception).__name__, exception))
+            raise ApiParsingException("Cannot build gps coordinates: ({0}) {1}".format(type(exception).__name__, exception))
 
 
 class BaseModel(peewee.Model):
@@ -240,7 +260,7 @@ class StationInfo(StationCommon, BaseModel):
 
         except (TypeError, KeyError, ValueError, arrow.parser.ParserError) as exception:
             logging.warning("Input station information: %s", data)
-            raise VmsException("Cannot build station information: ({0}) {1}".format(type(exception).__name__, exception))
+            raise ApiParsingException("Cannot build station information: ({0}) {1}".format(type(exception).__name__, exception))
 
 
 class StationRecord(StationCommon, BaseModel):
@@ -363,7 +383,7 @@ class StationRecord(StationCommon, BaseModel):
                 overflow_activation=VelibMetropoleApi.bool_from_yes_no_str(data['overflowActivation']))
         except (TypeError, KeyError, ValueError) as exception:
             logging.warning("Input station record: %s", data)
-            raise VmsException("Cannot build station record: ({0}) {1}".format(type(exception).__name__, exception))
+            raise ApiParsingException("Cannot build station record: ({0}) {1}".format(type(exception).__name__, exception))
 
 
 class StationSample:
@@ -419,7 +439,7 @@ class VelibMetropoleApi:
         elif value == "no":
             return False
         else:
-            raise VmsException("Invalid value for boolean conversion: {0}".format(value))
+            raise ApiParsingException("Invalid value for boolean conversion: {0}".format(value))
 
     URL_TEMPLATE = (
         "https://www.velib-metropole.fr/webapi/map/details?"
@@ -477,7 +497,7 @@ class VelibMetropoleApi:
 
         except requests.exceptions.RequestException as exception:
             # inform caller
-            raise VmsException("Could not download API data: {0}".format(exception))
+            raise ApiNetworkException("Could not download API data: {0}".format(exception))
 
 
 class Configuration:
@@ -562,12 +582,13 @@ class App:
         moment = arrow.utcnow()
         try:
             data = self._api.get_json()
-        except VmsException as exception:
+        except ApiNetworkException as exception:
             # save stats for errors
             ApiReachabilityStat.save_api_stat(moment.timestamp, False, str(exception))
             raise
-        # save stats for successes
-        ApiReachabilityStat.save_api_stat(moment.timestamp, True)
+        else:
+            # save stats for successes
+            ApiReachabilityStat.save_api_stat(moment.timestamp, True)
         # return infos to caller
         return (moment, data)
 
@@ -580,14 +601,23 @@ class App:
             json_data = json.loads(data)
         except json.JSONDecodeError as exception:
             logging.debug("Invalid JSON: %s", data)
-            raise VmsException("Could not parse json data: {0}".format(exception))
+            raise ApiParsingException("Could not parse json data: {0}".format(exception))
 
         # analyse input
         # - dict if KO: {"error":{"code":503,"message":"Service Unavailable"}}
         # - list if OK: [{"station": ...]
         try:
             error = json_data['error']
-            raise VmsException("API problem with error: {0}".format(error))
+            try:
+                code = int(error['code'])
+                if code == 503:
+                    raise ApiHttp503Exception("API error {0}".format(error))
+            except (TypeError, KeyError, ValueError) as exception:
+                # in case the code extraction and conversion fails
+                raise ApiParsingException("API problem with incorrectly-structured error: {0}".format(error))
+            else:
+                # for codes not handled above
+                raise ApiParsingException("API problem with generic error: {0}".format(error))
         except TypeError as exception:
             # raised if json_data is not a dictionary
             # https://www.json.org
@@ -596,7 +626,7 @@ class App:
             pass
         except KeyError as exception:
             # raised if json_data is a dict but 'error' was unavailable
-            raise VmsException("API problem without error: {0}".format(json_data))
+            raise ApiParsingException("API problem without error: {0}".format(json_data))
 
         # log some statistics
         logging.info("%s records in incoming data", len(json_data))
@@ -623,7 +653,12 @@ class App:
                 raise VmsException("Could not list files: {0}".format(exception))
             for file_path in sorted(files):
                 moment, data = self.get_from_file(file_path)
-                self.do_work(moment, data)
+                try:
+                    self.do_work(moment, data)
+                except ApiHttp503Exception as exception:
+                    logging.warning("Detected HTTP error 503 while processing {0}: {1}".format(file_path, exception))
+                    if not self._args.continue_on_http_503:
+                        raise
         elif self._args.file:
             moment, data = self.get_from_file(self._args.file)
             self.do_work(moment, data)
@@ -642,6 +677,7 @@ def main():
         parser.add_argument('-l', '--log-level', choices=['debug', 'info', 'warning', 'error', 'critical'])
         parser.add_argument('-f', '--file')
         parser.add_argument('-d', '--dir')
+        parser.add_argument('--continue-on-http-503', default=False, action='store_true')
         args = parser.parse_args()
         app = App(args)
         app.run()
