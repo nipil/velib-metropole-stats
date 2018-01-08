@@ -496,6 +496,9 @@ class App:
     """
     aze
     """
+
+    FILENAME_TIMESTAMP_PATTERN = 'YYYY-MM-DD_HH-mm-ss_ZZZ'
+
     def __init__(self, args):
 
         # read configuration file
@@ -535,13 +538,17 @@ class App:
         """
         aze
         """
-        file_path = Path(self._args.file).expand()
-        moment = arrow.get(file_path.name, 'YYYY-MM-DD_HH-mm-ss_ZZZ')
+        full_path = Path(file_path).expand()
+        file_name = full_path.name
         try:
-            with bz2.open(file_path, 'rt') as file_obj:
+            moment = arrow.get(file_name, self.FILENAME_TIMESTAMP_PATTERN)
+        except arrow.parser.ParserError as exception:
+            raise VmsException("Could find pattern {0} at start of filename {1}".format(self.FILENAME_TIMESTAMP_PATTERN, file_name))
+        try:
+            with bz2.open(full_path, 'rt') as file_obj:
                 data = file_obj.read()
         except OSError as exception:
-            raise VmsException("Could not bunzip2 {0}: {1}".format(file_path, exception))
+            raise VmsException("Could not bunzip2 {0}: {1}".format(full_path, exception))
         # return infos to caller
         return (moment, data)
 
@@ -561,16 +568,10 @@ class App:
         # return infos to caller
         return (moment, data)
 
-    def run(self):
+    def do_work(self, moment, data):
         """
         aze
         """
-        # load moment/data from designated source
-        if self._args.file:
-            moment, data = self.get_from_file(self._args.file)
-        else:
-            moment, data = self.get_from_api()
-
         # parse json
         try:
             json_data = json.loads(data)
@@ -607,6 +608,25 @@ class App:
                 new_records_count += entry.save_all_if_changed()
         logging.info("%s updates detected", new_records_count)
 
+    def run(self):
+        """
+        aze
+        """
+        if self._args.dir:
+            try:
+                files = (Path(self._args.dir).files())
+            except (NotADirectoryError, FileNotFoundError) as exception:
+                raise VmsException("Could not list files: {0}".format(exception))
+            for file_path in sorted(files):
+                moment, data = self.get_from_file(file_path)
+                self.do_work(moment, data)
+        elif self._args.file:
+            moment, data = self.get_from_file(self._args.file)
+            self.do_work(moment, data)
+        else:
+            moment, data = self.get_from_api()
+            self.do_work(moment, data)
+
 
 def main():
     """
@@ -615,8 +635,9 @@ def main():
     try:
         parser = argparse.ArgumentParser(description="velib-metropole-stats")
         parser.add_argument('-c', '--config', default='vms.conf')
-        parser.add_argument('-d', '--debug', default=False, action='store_true')
+        parser.add_argument('--debug', default=False, action='store_true')
         parser.add_argument('-f', '--file')
+        parser.add_argument('-d', '--dir')
         args = parser.parse_args()
         app = App(args)
         app.run()
