@@ -9,6 +9,7 @@ import bz2
 import configparser
 import json
 import logging
+import logging.handlers
 import sys
 
 import pdb
@@ -520,33 +521,45 @@ class App:
 
     FILENAME_TIMESTAMP_PATTERN = 'YYYY-MM-DD_HH-mm-ss_ZZZ'
 
+    ALLOWED_LOG_TIME_FREQ = ['S', 'M', 'H', 'D', *['W%i' % i for i in range(7)], 'midnight']
+
     def __init__(self, args):
 
         # read configuration file
         self._args = args
         self._configuration = Configuration(self._args.config)
 
-        # log everything to file
+        # setup default console logging
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.WARNING)
+        console_handler.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
+
+        # setup initial root logger
         logging.basicConfig(level=logging.DEBUG,
-                            format='%(asctime)s %(levelname)s %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S %z',
-                            filename=Path(self._configuration.get('logging', 'file_path')).expand(),
-                            filemode='a')
+                            handlers=[console_handler])
+        root_logger = logging.getLogger('')
 
-        # reduced logging for screen output
-        console = logging.StreamHandler()
-        logging.getLogger('').addHandler(console)
-        console.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
-        # set default logging level
-        console.setLevel(logging.WARNING)
+        # setup file logging
+        file_rotation_time = self._configuration.get('logging', 'file_rotation_time')
+        if file_rotation_time not in self.ALLOWED_LOG_TIME_FREQ:
+            raise VmsException("{0} must be one of {1}".format('file_rotation_time', self.ALLOWED_LOG_TIME_FREQ))
+        backup_count = int(self._configuration.get('logging', 'file_rotation_backup'))
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            filename=Path(self._configuration.get('logging', 'file_path')).expand(),
+            when=file_rotation_time,
+            backupCount=backup_count)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        root_logger.addHandler(file_handler)
 
+        # finalize console log level
         level = self._configuration.get('logging', 'console_log_level')
         if self._args.log_level:
             level = self._args.log_level
         numeric_level = getattr(logging, level.upper(), None)
         if not isinstance(numeric_level, int):
             raise VmsException('Invalid log level: {0}'.format(level))
-        console.setLevel(numeric_level)
+        console_handler.setLevel(numeric_level)
 
         # setup database target
         # BaseModel.set_database_filepath(os.path.expanduser(self._configuration.get('database', 'file_path'))) # TODO: fix
