@@ -543,11 +543,14 @@ class VelibMetropoleApi:
         "gpsBotLongitude={3}&"
         "zoomLevel={4}")
 
+    DEFAULT_TOP_COORDINATES = (49.1, 2.7)
+    DEFAULT_BOTTOM_COORDINATES = (48.6, 1.9)
+
     def __init__(self, top_coordinates=None, bottom_coordinates=None, zoom_level=15):
 
-        self._top_coordinates = top_coordinates or GpsCoordinates(49.1, 2.7)
+        self._top_coordinates = top_coordinates or GpsCoordinates(*self.DEFAULT_TOP_COORDINATES)
 
-        self._bottom_coordinates = bottom_coordinates or GpsCoordinates(48.6, 1.9)
+        self._bottom_coordinates = bottom_coordinates or GpsCoordinates(*self.DEFAULT_BOTTOM_COORDINATES)
 
         if not self._bottom_coordinates < self._top_coordinates:
             raise VmsException("Constraint violated: {0} < {1}".format(self._bottom_coordinates, self._top_coordinates))
