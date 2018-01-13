@@ -152,7 +152,7 @@ class StationCommon:
     """
     aze
     """
-    def get_previous(self):
+    def get_latest_up_to_self(self):
         """
         aze
         """
@@ -160,7 +160,7 @@ class StationCommon:
         sub_query = cls \
             .select(peewee.fn.MAX(cls.moment)) \
             .where(cls.code == self.code) \
-            .where(cls.moment < self.moment)
+            .where(cls.moment <= self.moment)
         query = cls \
             .select() \
             .where(cls.code == self.code) \
@@ -176,11 +176,31 @@ class StationCommon:
         aze
         """
         logging.debug("Saving if changed %s", self)
-        previous = self.get_previous()
-        logging.debug("Last preceding %s", previous)
-        if previous is None or self.has_changed(previous):
+        previous = self.get_latest_up_to_self()
+        logging.debug("Latest up to self is %s", previous)
+
+        # nothing exists in database before self
+        if previous is None:
             return self.save(force_insert=True)
-        return 0
+
+        # check age
+        if self.moment < previous.moment:
+            # this must not happend
+            raise VmsException("Previous is futher in the future than current")
+
+        elif previous.moment < self.moment:
+            if self.has_changed(previous):
+                return self.save(force_insert=True)
+            else:
+                # not changed, skip
+                pass
+        else:
+            # same moment already in database.
+            # available design choices:
+            # - do nothing
+            # - update values from previous to self
+            # current choice: do nothing
+            return 0
 
 
 class StationInfo(StationCommon, BaseModel):
