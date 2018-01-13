@@ -684,6 +684,7 @@ def main():
     """
     aze
     """
+    start_time = arrow.now()
     try:
         parser = argparse.ArgumentParser(description="velib-metropole-stats")
         parser.add_argument('-c', '--config', default='vms.conf')
@@ -709,8 +710,15 @@ def main():
             raise exception
 
     except VmsException as exception:
-        logging.critical("%s", exception)
+        logging.error("%s", exception)
         raise  # DEBUG
+
+    except Exception as exception:
+        logging.critical("%s", exception)
+        raise
+
+    finally:
+        logging.info("Ran for %s", arrow.now() - start_time)
 
 
 if __name__ == '__main__':
