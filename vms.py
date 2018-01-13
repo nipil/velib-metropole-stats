@@ -7,6 +7,7 @@ aze
 import argparse
 import bz2
 import configparser
+import itertools
 import json
 import logging
 import logging.handlers
@@ -171,6 +172,9 @@ class StationCommon:
             return None
 
     def save_if_changed(self):
+        """
+        aze
+        """
         logging.debug("Saving if changed %s", self)
         previous = self.get_previous()
         logging.debug("Last preceding %s", previous)
@@ -184,7 +188,7 @@ class StationInfo(StationCommon, BaseModel):
     Holds "permanent" station information
     """
     moment = peewee.IntegerField()
-    state = peewee.CharField() # TODO: "Operative"/?/? could translate to integers ?
+    state = peewee.CharField() # TODO: "Operative"/"Work in progress"/.../?
     name = peewee.CharField()
     stype = peewee.BooleanField()
     code = peewee.IntegerField()
@@ -424,6 +428,95 @@ class StationSample:
         n_saved += StationCommon.save_if_changed(self._record)
         return n_saved
 
+    @staticmethod
+    def remove_duplicate_code(iterable):
+        """
+        2018-01-11 19:48:01 CET:
+        apparition in an entry with duplicate "code" JSON content
+
+          "station": {
+            "gps": {
+              "latitude": 48.87295368099433,
+              "longitude": 2.3539475351572037
+            },
+            "state": "Operative",
+            "name": "Petites Ecuries - Faubourg Saint-Denis",
+            "code": "10006",
+            "type": "no",
+            "dueDate": 1516230038.268
+          },
+          "nbBike": 8,
+          "nbEbike": 1,
+          "nbFreeDock": 0,
+          "nbFreeEDock": 19,
+          "creditCard": "no",
+          "nbDock": 0,
+          "nbEDock": 28,
+          "nbBikeOverflow": 0,
+          "nbEBikeOverflow": 0,
+          "kioskState": "no",
+          "overflow": "yes",
+          "overflowActivation": "yes",
+          "maxBikeOverflow": 28,
+          "densityLevel": 1
+        },
+
+        {
+          "station": {
+            "gps": {
+              "latitude": 48.872939767837096,
+              "longitude": 2.35403448428308
+            },
+            "state": "Work in progress",
+            "name": "Petites Ecuries - Faub. Saint-Denis",
+            "code": "10006",
+            "type": "no",
+            "dueDate": 1517356800
+          },
+          "nbBike": 0,
+          "nbEbike": 0,
+          "nbFreeDock": 0,
+          "nbFreeEDock": 0,
+          "creditCard": "no",
+          "nbDock": 0,
+          "nbEDock": 0,
+          "nbBikeOverflow": 0,
+          "nbEBikeOverflow": 0,
+          "kioskState": "no",
+          "overflow": "no",
+          "overflowActivation": "no",
+          "maxBikeOverflow": 0,
+          "densityLevel": 1
+        },
+
+        FIX: Remove duplicates
+        - extract duplicates from list (based on "code")
+        - log them all into a warning
+        - keep on state=Operative
+        - if many remain, raise an exception
+        """
+        # group by code
+        sample_bins = {}
+        for index, sample in enumerate(iterable):
+            group = sample_bins.get(sample._info.code, [])
+            group.append(sample)
+            sample_bins[sample._info.code] = group
+        # find duplicates
+        for code, samples in sample_bins.items():
+            # skip if no duplicates
+            if len(samples) == 1:
+                continue
+            logging.warning("Duplicates samples found in input: %s", samples)
+            # remove non-operative
+            samples = [sample for sample in samples if sample._info.state == "Operative"]
+            # do not go further if there are still duplicates
+            if len(samples) > 1:
+                raise Exception("Could not auto-fix duplicate samples found, remains: %s", samples)
+            # store filtered result back into original group
+            sample_bins[code] = samples
+        # flatten sub-lists
+        return (sample for sample in samples for samples in sample_bins.values())
+
 
 class VelibMetropoleApi:
     """
@@ -646,6 +739,7 @@ class App:
 
         # build objects
         station_records = (StationSample.from_dict(moment.timestamp, entry) for entry in json_data)
+        station_records = StationSample.remove_duplicate_code(station_records)
 
         # process
         new_records_count = 0
