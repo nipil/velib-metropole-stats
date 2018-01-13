@@ -40,10 +40,21 @@ class ApiNetworkException(ApiException):
     aze
     """
 
-class ApiHttp503Exception(ApiNetworkException):
+class ApiHttpException(ApiNetworkException):
     """
     aze
     """
+    def __init__(self, code, origin):
+        self.code = code
+        self.origin = origin
+
+class ApiErrorCode(ApiException):
+    """
+    aze
+    """
+    def __init__(self, code, content):
+        self.code = code
+        self.content = content
 
 class ApiParsingException(ApiException):
     """
@@ -566,14 +577,10 @@ class VelibMetropoleApi:
     DEFAULT_BOTTOM_COORDINATES = (48.6, 1.9)
 
     def __init__(self, top_coordinates=None, bottom_coordinates=None, zoom_level=15):
-
         self._top_coordinates = top_coordinates or GpsCoordinates(*self.DEFAULT_TOP_COORDINATES)
-
         self._bottom_coordinates = bottom_coordinates or GpsCoordinates(*self.DEFAULT_BOTTOM_COORDINATES)
-
         if not self._bottom_coordinates < self._top_coordinates:
             raise VmsException("Constraint violated: {0} < {1}".format(self._bottom_coordinates, self._top_coordinates))
-
         self._zoom_level = zoom_level
 
     def __str__(self):
@@ -611,9 +618,10 @@ class VelibMetropoleApi:
             # return our precious data
             return text
 
+        except requests.exceptions.HTTPError as exception:
+            raise ApiHttpException(exception.response.status_code, exception)
         except requests.exceptions.RequestException as exception:
-            # inform caller
-            raise ApiNetworkException("Could not download API data: {0}".format(exception))
+            raise ApiNetworkException("Could not download API data: ({0}) {1}".format(exception.__class__.__name__, exception))
 
 
 class Configuration:
@@ -738,8 +746,7 @@ class App:
             error = json_data['error']
             try:
                 code = int(error['code'])
-                if code == 503:
-                    raise ApiHttp503Exception("API error {0}".format(error))
+                raise ApiErrorCode(code, error)
             except (TypeError, KeyError, ValueError) as exception:
                 # in case the code extraction and conversion fails
                 raise ApiParsingException("API problem with incorrectly-structured error: {0}".format(error))
@@ -823,7 +830,22 @@ def main():
             logging.info(message)
         else:
             logging.warning(message)
-            raise exception
+        # in any case, use the exception to set exit code
+        raise
+
+    except ApiHttpException as exception:
+        if exception.code in {502, 503}:
+            logging.warning("Server error: %s", exception.origin)
+            sys.exit(1)
+        else:
+            raise
+
+    except ApiErrorCode as exception:
+        if exception.code in {503}:
+            logging.warning("Api returned error: %s", exception.content)
+            sys.exit(1)
+        else:
+            raise
 
     except VmsException as exception:
         logging.error("%s", exception)
