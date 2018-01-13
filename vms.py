@@ -183,24 +183,23 @@ class StationCommon:
         if previous is None:
             return self.save(force_insert=True)
 
-        # check age
+        # this must not happend
         if self.moment < previous.moment:
-            # this must not happend
             raise VmsException("Previous is futher in the future than current")
 
-        elif previous.moment < self.moment:
+        # check age
+        if previous.moment < self.moment:
             if self.has_changed(previous):
                 return self.save(force_insert=True)
-            else:
-                # not changed, skip
-                pass
         else:
-            # same moment already in database.
+            # same moment !
             # available design choices:
             # - do nothing
             # - update values from previous to self
             # current choice: do nothing
-            return 0
+            pass
+
+        return 0
 
 
 class StationInfo(StationCommon, BaseModel):
