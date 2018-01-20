@@ -61,6 +61,11 @@ class ApiParsingException(ApiException):
     aze
     """
 
+class ApiEmptyReplyException(ApiParsingException):
+    """
+    aze
+    """
+
 class GpsCoordinates:
     """
     Holds GPS coordinates
@@ -732,6 +737,10 @@ class App:
         """
         aze
         """
+        # handle simple errors early
+        if not data:
+            raise ApiEmptyReplyException("Empty reply received")
+
         # parse json
         try:
             json_data = json.loads(data)
@@ -835,7 +844,7 @@ def main():
 
     except ApiHttpException as exception:
         if exception.code in {502, 503}:
-            logging.warning("Server error: %s", exception.origin)
+            logging.warning("Api server error: %s", exception.origin)
             sys.exit(1)
         else:
             raise
@@ -846,6 +855,10 @@ def main():
             sys.exit(1)
         else:
             raise
+
+    except ApiEmptyReplyException as exception:
+        logging.warning("Api server error: %s", exception)
+        sys.exit(1)
 
     except VmsException as exception:
         logging.error("%s", exception)
