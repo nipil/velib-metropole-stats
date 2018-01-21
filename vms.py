@@ -40,6 +40,11 @@ class ApiNetworkException(ApiException):
     aze
     """
 
+class ApiNetworkTimeout(ApiNetworkException):
+    """
+    aze
+    """
+
 class ApiHttpException(ApiNetworkException):
     """
     aze
@@ -623,8 +628,12 @@ class VelibMetropoleApi:
             # return our precious data
             return text
 
+        except requests.exceptions.Timeout as exception:
+            raise ApiNetworkTimeout(exception)
+
         except requests.exceptions.HTTPError as exception:
             raise ApiHttpException(exception.response.status_code, exception)
+
         except requests.exceptions.RequestException as exception:
             raise ApiNetworkException("Could not download API data: ({0}) {1}".format(exception.__class__.__name__, exception))
 
@@ -856,7 +865,7 @@ def main():
         else:
             raise
 
-    except ApiEmptyReplyException as exception:
+    except (ApiEmptyReplyException, ApiNetworkTimeout) as exception:
         logging.warning("Api server error: %s", exception)
         sys.exit(1)
 
