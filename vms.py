@@ -551,7 +551,7 @@ class StationSample:
             samples = [sample for sample in samples if sample._info.state == "Operative"]
             # do not go further if there are still duplicates
             if len(samples) > 1:
-                raise Exception("Could not auto-fix duplicate samples found, remains: %s", samples)
+                raise VmsException("Could not auto-fix duplicate samples found, remains: {0}".format(samples))
             # store filtered result back into original group
             sample_bins[code] = samples
         # flatten sub-lists
