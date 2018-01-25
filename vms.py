@@ -678,14 +678,8 @@ class App:
         root_logger = logging.getLogger('')
 
         # setup file logging
-        file_rotation_time = self._configuration.get('logging', 'file_rotation_time')
-        if file_rotation_time not in self.ALLOWED_LOG_TIME_FREQ:
-            raise VmsException("{0} must be one of {1}".format('file_rotation_time', self.ALLOWED_LOG_TIME_FREQ))
-        backup_count = int(self._configuration.get('logging', 'file_rotation_backup'))
-        file_handler = logging.handlers.TimedRotatingFileHandler(
-            filename=Path(self._configuration.get('logging', 'file_path')).expand(),
-            when=file_rotation_time,
-            backupCount=backup_count)
+        file_path = Path(self._configuration.get('logging', 'file_path')).expand()
+        file_handler = logging.handlers.WatchedFileHandler(file_path)
         file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
         root_logger.addHandler(file_handler)
 
