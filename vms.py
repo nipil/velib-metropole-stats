@@ -846,7 +846,7 @@ def main():
         raise
 
     except ApiHttpException as exception:
-        if exception.code in {502, 503}:
+        if exception.code in {500, 502, 503}:
             logging.warning("Api server error: %s", exception.origin)
             sys.exit(1)
         else:
